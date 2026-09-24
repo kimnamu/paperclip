@@ -18,6 +18,11 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async (importActual) => {
   };
 });
 import { prepareAdapterExecutionTargetRuntime } from "@paperclipai/adapter-utils/execution-target";
+vi.mock("./cli-capabilities.js", async (importActual) => {
+  const actual = await importActual<typeof import("./cli-capabilities.js")>();
+  return { ...actual, readBundledClaudeCodeVersion: vi.fn(actual.readBundledClaudeCodeVersion) };
+});
+import { readBundledClaudeCodeVersion } from "./cli-capabilities.js";
 import {
   buildClaudeAcpConfig,
   createClaudeAcpExecutor,
@@ -781,6 +786,58 @@ describe("claude_local ACP lane", () => {
 
     expect(result.exitCode).toBe(0);
     expect(meta[0]?.env?.ANTHROPIC_MODEL).toBe("claude-fable-5-1");
+  });
+
+  it("reads the Claude Code version bundled with the ACP bridge", async () => {
+    await expect(readBundledClaudeCodeVersion()).resolves.toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it.each([
+    ["claude-opus-5-5", {}],
+    ["us.anthropic.claude-opus-5-5", { CLAUDE_CODE_USE_BEDROCK: "1" }],
+  ])("rejects %s before launch when the bundled Claude Code is too old", async (model, env) => {
+    vi.mocked(readBundledClaudeCodeVersion).mockResolvedValueOnce("2.1.257");
+    const root = await makeTempRoot("paperclip-claude-acp-old-bundle-");
+    const runtimes: FakeRuntime[] = [];
+    const execute = createClaudeAcpExecutor({
+      createRuntime: (options: FakeRuntimeOptions) => {
+        const runtime = new FakeRuntime(options);
+        runtimes.push(runtime);
+        return runtime as never;
+      },
+    });
+
+    const context = buildContext(root);
+    const result = await execute({ ...context, config: { ...context.config, model, env } });
+
+    expect(runtimes.flatMap((runtime) => runtime.startInputs)).toEqual([]);
+    expect(result.errorCode).toBe("claude_cli_version_incompatible");
+    expect(result.errorMessage).toContain(`${model} requires Claude Code 2.1.280 or newer`);
+    expect(result.resultJson).toMatchObject({
+      requiredClaudeCodeVersion: "2.1.280",
+      detectedClaudeCodeVersion: "2.1.257",
+    });
+  });
+
+  it("leaves Opus 5.5 to an explicit CLAUDE_CODE_EXECUTABLE on the ACP lane", async () => {
+    vi.mocked(readBundledClaudeCodeVersion).mockClear();
+    const root = await makeTempRoot("paperclip-claude-acp-executable-");
+    const execute = createClaudeAcpExecutor({
+      createRuntime: (options: FakeRuntimeOptions) => new FakeRuntime(options) as never,
+    });
+
+    const context = buildContext(root);
+    const result = await execute({
+      ...context,
+      config: {
+        ...context.config,
+        model: "claude-opus-5-5",
+        env: { CLAUDE_CODE_EXECUTABLE: path.join(root, "claude") },
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(readBundledClaudeCodeVersion).not.toHaveBeenCalled();
   });
 
   it("creates the ACP session on the in-sandbox workspace cwd for runner-backed remote runs", async () => {
