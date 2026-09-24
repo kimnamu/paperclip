@@ -793,6 +793,30 @@ describe("claude_local ACP lane", () => {
   });
 
   it.each([
+    ["hoisted", { "node_modules/@anthropic-ai/claude-agent-sdk": "2.1.257" }],
+    // npm nests the bridge's pinned SDK when another SDK version is hoisted.
+    ["nested under the bridge", {
+      "node_modules/@anthropic-ai/claude-agent-sdk": "2.1.280",
+      "node_modules/@agentclientprotocol/claude-agent-acp/node_modules/@anthropic-ai/claude-agent-sdk": "2.1.257",
+    }],
+  ])("reads the bridge's Claude Code version from an npm install with the SDK %s", async (_layout, sdkDirs) => {
+    const root = await makeTempRoot("paperclip-claude-acp-npm-layout-");
+    const writePackage = async (dir: string, manifest: Record<string, unknown>) => {
+      await fs.mkdir(path.join(root, dir), { recursive: true });
+      await fs.writeFile(path.join(root, dir, "package.json"), JSON.stringify(manifest));
+    };
+    // Export maps as published: the bridge exports ./*, the SDK exports only ".".
+    await writePackage("node_modules/@agentclientprotocol/claude-agent-acp", { exports: { "./*": "./*" } });
+    for (const [dir, claudeCodeVersion] of Object.entries(sdkDirs)) {
+      await writePackage(dir, { exports: { ".": { default: "./sdk.mjs" } }, claudeCodeVersion });
+      await fs.writeFile(path.join(root, dir, "sdk.mjs"), "");
+    }
+
+    const adapterModule = path.join(root, "node_modules/@paperclipai/adapter-claude-local/dist/server/cli-capabilities.js");
+    await expect(readBundledClaudeCodeVersion(adapterModule)).resolves.toBe("2.1.257");
+  });
+
+  it.each([
     ["claude-opus-5-5", {}],
     ["us.anthropic.claude-opus-5-5", { CLAUDE_CODE_USE_BEDROCK: "1" }],
   ])("rejects %s before launch when the bundled Claude Code is too old", async (model, env) => {

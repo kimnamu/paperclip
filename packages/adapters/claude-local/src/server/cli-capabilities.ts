@@ -53,11 +53,12 @@ export function parseClaudeCliVersion(output: string): string | null {
  * The Claude Code version bundled with the ACP bridge's SDK dependency, which
  * the bridge launches unless CLAUDE_CODE_EXECUTABLE is set. Resolved through
  * the bridge like `build-provider-pack.mjs`, so workspace overrides count.
+ * `from` is where resolution starts; tests point it into an npm-style tree.
  */
-export async function readBundledClaudeCodeVersion(): Promise<string | null> {
+export async function readBundledClaudeCodeVersion(from: string | URL = import.meta.url): Promise<string | null> {
   try {
     const acpRequire = createRequire(
-      createRequire(import.meta.url).resolve("@agentclientprotocol/claude-agent-acp/package.json"),
+      createRequire(from).resolve("@agentclientprotocol/claude-agent-acp/package.json"),
     );
     // The SDK does not export ./package.json; its entry sits at the package root.
     const sdkDir = path.dirname(acpRequire.resolve("@anthropic-ai/claude-agent-sdk"));
